@@ -691,7 +691,7 @@
             <button class="secondary" id="select-all" style="padding: 6px 16px; font-size: 0.85rem;">Select All</button>
             <button class="secondary" id="deselect-all" style="padding: 6px 16px; font-size: 0.85rem;">Deselect All</button>
             <button class="secondary" id="select-incomplete" style="padding: 6px 16px; font-size: 0.85rem;">Select Incomplete</button>
-            <span style="font-size: 0.875rem; color: var(--bb-text-secondary);">I recommend solving categories in order! Solved categories will be marked as complete ✓</span>
+            <span style="font-size: 0.875rem; color: var(--bb-text-secondary);">I recommend solving categories in order! A category is marked complete ✓ after 3 correct answers in a row</span>
         </div>
         <div class="difficulty-filter" role="group" aria-label="Filter by difficulty">
             <span class="difficulty-filter-label">Practice only:</span>
@@ -728,9 +728,9 @@
             <div class="panel-card">
                 <div id="tips-header">
                     <h3>Method and Tips & Tricks</h3>
-                    <span id="tips-toggle-btn">[−]</span>
+                    <span id="tips-toggle-btn">[+]</span>
                 </div>
-                <div id="tips-collapsible-content">
+                <div id="tips-collapsible-content" style="display: none;">
                     <ul id="tips-list"><li>Select a category to see tips.</li></ul>
                     <div class="tips-actions">
                         <button class="secondary" id="show-explanation">View Solved Example</button> 
@@ -848,6 +848,7 @@ const categories = CATEGORIES;
 // ===== Global State =====
 let currentQuestion = { answer: null, category: null, desmosSolutions: null };
 let questionSolved = false;
+let questionMissed = false; // a wrong answer means this question can't count toward a streak
 let totalCompletionTracked = false;
 
 // ===== New Question Logic =====
@@ -878,6 +879,7 @@ function newQuestion() {
     const { questionText, answer, choices, desmosSolutions } = category.questionGenerator();
     currentQuestion = { answer, choices: choices || null, category, desmosSolutions };
     questionSolved = false;
+    questionMissed = false;
 
     // Apply colorization to the Category Title card header
     document.getElementById('current-category-title').innerHTML = colorizeDifficultyText(category.title);
@@ -999,12 +1001,16 @@ function handleCheckAnswer() {
         if (!questionSolved) {
             incrementCounter();
             questionSolved = true;
-            markCategoryLearned(currentQuestion.category.id);
+            if (!questionMissed) recordStreakAnswer(currentQuestion.category.id, true);
         }
         return true;
     } else {
         document.getElementById('result').innerHTML = `❌ Incorrect. The correct answer was <strong>${currentQuestion.answer}</strong>.`;
         document.getElementById('result').style.color = "#d93025";
+        if (!questionSolved && !questionMissed) {
+            questionMissed = true;
+            recordStreakAnswer(currentQuestion.category.id, false);
+        }
         answerBox.focus();
         return false;
     }
@@ -1163,6 +1169,41 @@ let correctCount = 0;
 const learnedCategories = new Set();
 const STORAGE_KEY = 'drt-learned-categories';
 
+// A category is marked complete after STREAK_TO_COMPLETE first-try correct answers in a row
+const STREAK_TO_COMPLETE = 3;
+const STREAK_STORAGE_KEY = 'drt-category-streaks';
+let categoryStreaks = {};
+
+function saveStreaksToStorage() {
+    try { localStorage.setItem(STREAK_STORAGE_KEY, JSON.stringify(categoryStreaks)); }
+    catch(e) {}
+}
+
+function loadStreaksFromStorage() {
+    try { categoryStreaks = JSON.parse(localStorage.getItem(STREAK_STORAGE_KEY)) || {}; }
+    catch(e) { categoryStreaks = {}; }
+}
+
+function recordStreakAnswer(categoryId, correct) {
+    if (learnedCategories.has(categoryId)) return;
+    const result = document.getElementById('result');
+    if (correct) {
+        const streak = (categoryStreaks[categoryId] || 0) + 1;
+        if (streak >= STREAK_TO_COMPLETE) {
+            delete categoryStreaks[categoryId];
+            markCategoryLearned(categoryId);
+            result.innerHTML += ` ${STREAK_TO_COMPLETE} in a row: category complete ✓`;
+        } else {
+            categoryStreaks[categoryId] = streak;
+            result.innerHTML += ` (${streak}/${STREAK_TO_COMPLETE} in a row to complete this category)`;
+        }
+    } else {
+        if (categoryStreaks[categoryId]) result.innerHTML += ` Streak reset (0/${STREAK_TO_COMPLETE}).`;
+        delete categoryStreaks[categoryId];
+    }
+    saveStreaksToStorage();
+}
+
 function saveLearnedToStorage() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...learnedCategories])); }
     catch(e) {}
@@ -1267,6 +1308,8 @@ function markCategoryLearned(categoryId) {
 
 function unmarkCategoryLearned(categoryId) {
     learnedCategories.delete(categoryId);
+    delete categoryStreaks[categoryId];
+    saveStreaksToStorage();
     const checkbox = document.getElementById(`cat-${categoryId}`);
     if (checkbox) {
         const div = checkbox.closest('div');
@@ -1367,6 +1410,7 @@ document.getElementById('answer-box').addEventListener('keydown', function(e) {
 document.addEventListener('DOMContentLoaded', () => {
     populateCategoryCheckboxes();
     loadLearnedFromStorage();
+    loadStreaksFromStorage();
     if (learnedCategories.size === categories.length) {
         document.getElementById('trophy-button').style.display = 'flex';
     }
